@@ -30,7 +30,7 @@ void sparse_mul(RINGELT v[N],
                 const sparse_poly_t b);
 int encode_sparse(sparse_poly_t * encode_output,
 		  const unsigned char hash_output[GLP_DIGEST_LENGTH]);
-void round_poly(RINGELT f[N],RINGELT K);
-RINGELT high_bits(RINGELT z, RINGELT K);
-RINGELT low_bits(RINGELT z, RINGELT K);
+void K_floor(RINGELT f[N]);
+RINGELT compress_coefficient(RINGELT u,
+			     RINGELT v);
 #endif

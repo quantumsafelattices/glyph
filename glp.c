@@ -94,22 +94,22 @@ int glp_deterministic_sign(glp_signature_t *signature,
                            const glp_signing_key_t sk, 
                            const unsigned char *message_digest,
                            const size_t dgst_len){
-  RINGELT u[N],u_rounded[N], y1_fft[N], y2_fft[N];
+  RINGELT ay1_y2[N], ay1_y2_rounded[N], y1_fft[N], y2_fft[N];
   unsigned char hash_output[GLP_DIGEST_LENGTH];
   copy_poly(y1_fft,y1);
   copy_poly(y2_fft,y2);
   FFT_FORWARD(y1_fft);
   FFT_FORWARD(y2_fft);
 
-  /*u = a y1 + y2*/
-  POINTWISE_MUL_ADD(u,a,y1_fft,y2_fft,N,Q);
-  FFT_BACKWARD(u);
-  MAPTOCYCLOTOMIC(u,N,Q);
+  /*ay1_y2 = a y1 + y2*/
+  POINTWISE_MUL_ADD(ay1_y2,a,y1_fft,y2_fft,N,Q);
+  FFT_BACKWARD(ay1_y2);
+  MAPTOCYCLOTOMIC(ay1_y2,N,Q);
 
   /*round and hash u*/
-  copy_poly(u_rounded,u);
-  round_poly(u_rounded,B - OMEGA);
-  if(!hash(hash_output, u_rounded, message_digest,dgst_len)) return 0;
+  copy_poly(ay1_y2_rounded,ay1_y2);
+  K_floor(ay1_y2_rounded);
+  if(!hash(hash_output, ay1_y2_rounded, message_digest,dgst_len)) return 0;
   if(!encode_sparse(&(signature->c), hash_output)) return 0;
 
   /*z_1 = y_1 + s_1 c*/
@@ -118,7 +118,7 @@ int glp_deterministic_sign(glp_signature_t *signature,
   MAPTOCYCLOTOMIC(signature->z1,N,Q);
 
   /*rejection sampling on z_1*/
-  for(uint16_t i = 0; i < N_LIMIT; i++) if(ABS(signature->z1[i]) > (B - OMEGA) ) return 0;
+  for(uint16_t i = 0; i < N_LIMIT; i++) if(ABS(signature->z1[i]) > (B-OMEGA) ) return 0;
 
   /*z_2 = y_2 + s_2 c*/
   sparse_mul(signature->z2, sk.s2, signature->c);
@@ -126,35 +126,18 @@ int glp_deterministic_sign(glp_signature_t *signature,
   MAPTOCYCLOTOMIC(signature->z2,N,Q);
 
   /*rejection sampling on z_2*/
-  for(uint16_t i = 0; i < N_LIMIT; i++) if(ABS(signature->z2[i]) > (B - OMEGA) ) return 0;
+  for(uint16_t i = 0; i < N_LIMIT; i++) if(ABS(signature->z2[i]) > (B-OMEGA) ) return 0;
 
-  /*compression rounding_target = a*z1 - t*c = u - z2*/
-  RINGELT approx_u[N], rounding_target[N];
-  POINTWISE_SUB(rounding_target,u,signature->z2, N, Q);
-  MAPTOCYCLOTOMIC(rounding_target,N,Q);
+  /*compression of a*z1 - t*c = (a*y1+y2) - z2*/
+  RINGELT az1_tc[N];
+  POINTWISE_SUB(az1_tc,ay1_y2,signature->z2, N, Q);
+  MAPTOCYCLOTOMIC(az1_tc,N,Q);
 
-  copy_poly(approx_u,rounding_target);
-  round_poly(approx_u,B -OMEGA);
-
-  /*signature compression*/
+   /*signature compression*/
   for(uint16_t i = 0; i < N_LIMIT; i++){
-    if(approx_u[i] == u_rounded[i]) signature->z2[i] = 0;
-
-    else if(rounding_target[i] <= (B-OMEGA)){
-      if(2*(Q%(2*(B-OMEGA) + 1)) >= (B-OMEGA)){
-        if((SIGN(signature->z2[i]) < 0) && (SIGN((rounding_target[i] + signature->z2[i]) %Q) <0)) signature->z2[i] = NEG(B-OMEGA);
-        else signature->z2[i] = B-OMEGA;
-      }
-    }
-
-    else if(rounding_target[i] >= Q - (B-OMEGA)){
-      if((SIGN(signature->z2[i]) > 0) && (rounding_target[i] + signature->z2[i] >= Q))signature->z2[i] = (B-OMEGA);
-      else if(approx_u[i] == u_rounded[i] + 1) signature->z2[i] = NEG(B-OMEGA);
-    }
-
-    else if(approx_u[i] == u_rounded[i] + 1) signature->z2[i] = NEG(B-OMEGA);
-    else signature->z2[i] = B-OMEGA;
+    signature->z2[i] = compress_coefficient(az1_tc[i], signature->z2[i]);
   }
+
   return 1;
 }
 
@@ -166,23 +149,23 @@ int glp_verify(glp_signature_t sig,
                const glp_public_key_t pk, 
                const unsigned char *message_digest,
                const size_t dgst_len){
-  RINGELT u[N],v[N];  
+  RINGELT h[N],tc[N];  
   sparse_poly_t c_test;
   unsigned char hash_output[GLP_DIGEST_LENGTH];
   uint16_t i;
   for(i = 0; i < N_LIMIT; i++){
-    if(ABS(sig.z1[i]) > (B - OMEGA) ) return 0;
-    if(ABS(sig.z2[i]) > (B - OMEGA) ) return 0;
+    if(ABS(sig.z1[i]) > (B-OMEGA) ) return 0;
+    if(ABS(sig.z2[i]) > (B-OMEGA) ) return 0;
   }
   FFT_FORWARD(sig.z1);
   FFT_FORWARD(sig.z2);
-  POINTWISE_MUL_ADD(u,a,sig.z1,sig.z2,N,Q);
-  FFT_BACKWARD(u);
-  sparse_mul(v,pk.t,sig.c);
-  POINTWISE_SUB(u,u,v,N,Q);
-  MAPTOCYCLOTOMIC(u,N,Q);
-  round_poly(u, B-OMEGA);
-  if(!hash(hash_output, u, message_digest, dgst_len))return 0;
+  POINTWISE_MUL_ADD(h,a,sig.z1,sig.z2,N,Q);
+  FFT_BACKWARD(h);
+  sparse_mul(tc,pk.t,sig.c);
+  POINTWISE_SUB(h,h,tc,N,Q);
+  MAPTOCYCLOTOMIC(h,N,Q);
+  K_floor(h);
+  if(!hash(hash_output, h, message_digest, dgst_len))return 0;
   if(!encode_sparse(&c_test,hash_output))return 0;
   for(i = 0; i < OMEGA; i++){
     if(c_test.pos[i] != sig.c.pos[i]) return 0;
@@ -191,4 +174,3 @@ int glp_verify(glp_signature_t sig,
     
   return 1;
 }
-

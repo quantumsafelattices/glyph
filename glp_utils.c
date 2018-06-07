@@ -159,8 +159,8 @@ int encode_sparse(sparse_poly_t *encode_output,
   uint16_t pos,sign,i,j;
   for(i=0; i<OMEGA; i++){
     while(1){
-      if(rand_bits_used >= (62 - NBITS)){
-        rand64 = (uint32_t) randomplease(&aes_key, aes_ivec, aes_ecount_buf, &aes_num, aes_in);
+      if(rand_bits_used + NBITS > 64){
+	rand64 = randomplease(&aes_key, aes_ivec, aes_ecount_buf, &aes_num, aes_in);
         rand_bits_used = 0;
       }
    
@@ -191,22 +191,32 @@ int encode_sparse(sparse_poly_t *encode_output,
   return 1;
 }
 
-
 /***********************************************ROUNDING***********************/
-void round_poly(RINGELT f[N], RINGELT K){
+void K_floor(RINGELT f[N]){
+  /*integer division by  2*K+1 where K = B - omega */
   uint16_t i;
   for(i = 0; i < N; i++){
-    f[i] = high_bits(f[i],K);
+    f[i] = (f[i]%Q) / (2*(B-OMEGA) + 1);
   }
 }
 
-/*high bits of z*/
-RINGELT high_bits(RINGELT z, RINGELT K){
-  return z/(RINGELT)(2*K + 1);
-}
+/********************************************COMPRESSION***********************/
 
-/*low bits of z, represented in [-K,K) mod Q */
-RINGELT low_bits(RINGELT z, RINGELT K){
-  RINGELT out = z - (high_bits(z,K))*(2*K+1);
-  return out <= K ? out : NEG(2*K + 1 - z);
+RINGELT compress_coefficient(RINGELT u, RINGELT v){
+  uint32_t kfloor_uv, kfloor_u;
+  const uint32_t K = B-OMEGA;
+  u = u%Q;
+  assert(ABS(v)<=K); 
+  kfloor_uv = ((u+v)%Q) / (2*K + 1);
+  kfloor_u = u / (2*K + 1);
+
+  if (kfloor_uv == kfloor_u)
+    return 0;
+  if (u < K)
+    return Q-K;
+  if ((u >= Q-K) && (SIGN(v)>0))
+    return K;
+  if (kfloor_uv < kfloor_u)
+    return Q-K;
+  return K;
 }
